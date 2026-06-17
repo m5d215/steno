@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.m5d215.steno</string>
+	<key>CFBundleName</key>
+	<string>steno</string>
+	<key>CFBundleExecutable</key>
+	<string>steno</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>会話を文字起こしするため、システム音声(他アプリの再生音声)を取得します。音声は外部に送信されません。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>自分の発話を文字起こしするため、マイク音声を取得します。音声は外部に送信されません。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>取得した音声をオンデバイスで文字起こしします。音声は外部に送信されません。</string>
+</dict>
+</plist>
