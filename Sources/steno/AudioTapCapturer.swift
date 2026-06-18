@@ -78,8 +78,6 @@ final class AudioTapCapturer: @unchecked Sendable {
     // IOProc(ioQueue) と controlQueue の双方から触る共有状態はロックで保護
     private let format = OSAllocatedUnfairLock<AVAudioFormat?>(initialState: nil)
     private let lastBufferAt = OSAllocatedUnfairLock(initialState: Date.distantPast)
-    private let lastLoudAt = OSAllocatedUnfairLock(initialState: Date.distantPast)  // 最後に有音バッファが来た時刻
-    private let lastRecreateAt = OSAllocatedUnfairLock(initialState: Date.distantPast)  // 最後に tap を作った時刻(backoff 用)
     private let deviceRate = OSAllocatedUnfairLock(initialState: Double(0))  // tap を作った時の出力デバイスの nominal rate
     private let outDevice = OSAllocatedUnfairLock(initialState: AudioObjectID(kAudioObjectUnknown))  // tap が乗る出力デバイス
 
@@ -92,8 +90,6 @@ final class AudioTapCapturer: @unchecked Sendable {
     private var watchdogTask: Task<Void, Never>?
 
     private let staleThreshold: TimeInterval = 10  // この秒数 frames が来なければ tap 死とみなす
-    private let silentThreshold: TimeInterval = 15  // 誰か出力中なのにこの秒数無音なら silent-death とみなす
-    private let recreateBackoff: TimeInterval = 45  // silent-death 判定での recreate 連発を防ぐ間隔
 
     init(onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) {
         self.onBuffer = onBuffer
@@ -206,8 +202,6 @@ final class AudioTapCapturer: @unchecked Sendable {
 
         let now = Date()
         lastBufferAt.withLock { $0 = now }
-        lastLoudAt.withLock { $0 = now }  // 起動直後に silent-death 誤判定しないよう now 起点に
-        lastRecreateAt.withLock { $0 = now }
         // tap format(fmt.sampleRate)ではなく**デバイスの nominal rate** を覚える。tap format は
         // デバイスのレートと別レイヤーで常に異なりうる(48000 tap on 44100 device は正常)。watchdog
         // が「デバイスのレートが変わったか」を同レイヤーで比較できるよう、デバイス側の値を記録する。
@@ -222,7 +216,8 @@ final class AudioTapCapturer: @unchecked Sendable {
 
     /// 現出力デバイスの sample rate 変化を監視する(controlQueue 上で叩かれる)。BT のプロファイル
     /// 切り替え(A2DP ⇄ HFP)は**デバイス ID を変えずに**フォーマットだけ変えるので、既定デバイス
-    /// 変更リスナーでは捕まらない。これが今回の silent-death の直接の引き金。
+    /// 変更リスナーでは捕まらない。これを取り逃すと tap が無音バッファだけ流し続けるので、ここと
+    /// watchdog の device-rate reconciliation の二段で必ず拾う。
     private func installFormatListener(on device: AudioObjectID) {
         removeFormatListener()
         var addr = AudioObjectPropertyAddress(
@@ -288,25 +283,7 @@ final class AudioTapCapturer: @unchecked Sendable {
             memcpy(dst, src, n)
         }
 
-        let now = Date()
-        lastBufferAt.withLock { $0 = now }
-        // 有音判定: ピークが noise floor を超えたら「鳴ってる」。silent-death(無音バッファだけ
-        // 流れ続ける)を watchdog が検知するための信号。hot path なので stride で間引いて走査。
-        if let ch = pcm.floatChannelData {
-            let n = Int(pcm.frameLength)
-            let s = ch[0]
-            var peak: Float = 0
-            var i = 0
-            while i < n {
-                let a = abs(s[i])
-                if a > peak { peak = a }
-                i += 4
-            }
-            if peak > 1e-4 { lastLoudAt.withLock { $0 = now } }
-        } else {
-            // float 以外はピーク判定できない。死と誤判定しないよう有音扱いにする。
-            lastLoudAt.withLock { $0 = now }
-        }
+        lastBufferAt.withLock { $0 = Date() }
         onBuffer(pcm)
     }
 
@@ -328,7 +305,7 @@ final class AudioTapCapturer: @unchecked Sendable {
                     continue
                 }
 
-                // (2a) device-rate reconciliation: 出力デバイスの nominal rate が tap 作成時から変わった
+                // (2) device-rate reconciliation: 出力デバイスの nominal rate が tap 作成時から変わった
                 // = BT プロファイル切り替え等の実イベント。format listener が取りこぼしても 5 秒以内に拾う
                 // backstop。比較は「デバイスの今 vs 作成時」(同レイヤー)なので、recreate 後に基準が更新
                 // されて収束する(tap format と比べると常時ズレて永久ループになる — それが前版のバグ)。
@@ -341,19 +318,6 @@ final class AudioTapCapturer: @unchecked Sendable {
                     ilog("watchdog: output device rate changed \(Int(createdRate))→\(Int(live))Hz, recreating tap")
                     self.requestRecreate(reason: "device rate \(Int(createdRate))→\(Int(live))Hz")
                     continue
-                }
-
-                // (2b) silent-death: 誰かが出力中(IsRunningOutput)なのに tap が無音のまま = レート変化
-                // 以外の理由で無音バッファだけ流れてる。最後の砦。recreate は steno の private aggregate を
-                // 作り直すだけで本体の再生経路には触れないので、無音期に誤発火しても実害は無い(取り逃すのは
-                // 無音だけ)。backoff で連発は防ぐ。
-                let silentFor = now.timeIntervalSince(self.lastLoudAt.withLock { $0 })
-                let sinceRecreate = now.timeIntervalSince(self.lastRecreateAt.withLock { $0 })
-                if silentFor > self.silentThreshold, sinceRecreate > self.recreateBackoff,
-                    !OutputProcesses.currentOutputAppNames().isEmpty
-                {
-                    ilog("watchdog: silent \(Int(silentFor))s while others output, recreating tap")
-                    self.requestRecreate(reason: "silent \(Int(silentFor))s while others output")
                 }
             }
         }
