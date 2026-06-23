@@ -66,6 +66,9 @@ final class AppController: ObservableObject {
     /// UI 形態に依らず明示的に assertion を握ることで、窓を隠しても SpeechAnalyzer が wedge しない。
     private var activityToken: NSObjectProtocol?
 
+    /// [spike] finalize(through:) の force-cut 検証用の周期タスク(STENO_FINALIZE_SPIKE=秒 で有効)。
+    private var finalizeSpikeTask: Task<Void, Never>?
+
     init() {
         activityToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep],
@@ -121,6 +124,24 @@ final class AppController: ObservableObject {
             statusLine = "文字起こしエンジン起動失敗"
             ilog("transcriber start failed: \(error.localizedDescription)")
             return
+        }
+
+        // [spike] finalize(through:) の挙動検証。STENO_FINALIZE_SPIKE=<秒> で system/mic 両 transcriber を
+        // 周期的に強制 final 確定し、長い連続発話の途中で final が切れて後続も拾い続けるか
+        // (= 話者境界 force-cut の土台が成立するか)を実測する。mic も対象なのでソロで長文を喋れば
+        // 検証できる(通話音声を流す必要なし)。挙動は source 非依存。本番経路には影響しない。
+        if let s = ProcessInfo.processInfo.environment["STENO_FINALIZE_SPIKE"],
+            let interval = Double(s), interval > 0
+        {
+            finalizeSpikeTask = Task { [systemTranscriber, micTranscriber] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(interval))
+                    ilog("[spike] force finalize(through:nil) on system+mic")
+                    await systemTranscriber.finalizeThroughLatest()
+                    await micTranscriber.finalizeThroughLatest()
+                }
+            }
+            ilog("[spike] finalize spike enabled: every \(interval)s")
         }
 
         let systemCapturer = AudioTapCapturer { [systemTranscriber] buf in

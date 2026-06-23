@@ -88,6 +88,19 @@ final class Transcriber: @unchecked Sendable {
         try await analyzer.start(inputSequence: stream)
     }
 
+    /// これまで analyzer が consume した音声まで強制的に final 確定する。session は継続する
+    /// (`finalize(through:)` は `finalizeAndFinish` と違いセッションを終わらせない)。
+    /// 話者境界での force-cut の土台(spike): これが効けば diarizer の境界検出で発話を切れる。
+    /// `through: nil` = 「最後に consume した音声まで」確定(未 consume なら何もしない)。
+    func finalizeThroughLatest() async {
+        guard let analyzer else { return }
+        do {
+            try await analyzer.finalize(through: nil)
+        } catch {
+            ilog("[\(label)] finalize failed: \(error.localizedDescription)")
+        }
+    }
+
     /// audio queue から同期で呼ばれる。AsyncStream.Continuation.yield は thread-safe。
     func stream(_ buffer: AVAudioPCMBuffer) {
         streamCount += 1
