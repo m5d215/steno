@@ -69,6 +69,9 @@ final class AppController: ObservableObject {
     /// [spike] finalize(through:) の force-cut 検証用の周期タスク(STENO_FINALIZE_SPIKE=秒 で有効)。
     private var finalizeSpikeTask: Task<Void, Never>?
 
+    /// [spike] system 音声の話者ターン境界検出器(STENO_DIAR=1 で有効)。境界で発話を切る。
+    private var segmenter: SpeakerSegmenter?
+
     init() {
         activityToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep],
@@ -144,8 +147,20 @@ final class AppController: ObservableObject {
             ilog("[spike] finalize spike enabled: every \(interval)s")
         }
 
-        let systemCapturer = AudioTapCapturer { [systemTranscriber] buf in
+        // [spike] STENO_DIAR=1 で system 音声に Streaming Sortformer を並走させ、話者ターン境界で
+        // system transcriber を finalize(through:) して発話を切る。目的は区切りであって話者特定では
+        // ない(ラベル精度は問わない)。object は先に作って capturer の closure に渡し、モデル読込
+        // (start, 初回 download あり)は下で async に走らせる。読込前の feed は no-op。
+        let segmenter: SpeakerSegmenter? =
+            ProcessInfo.processInfo.environment["STENO_DIAR"] != nil
+            ? SpeakerSegmenter { [systemTranscriber] in
+                Task { await systemTranscriber.finalizeThroughLatest() }
+            }
+            : nil
+
+        let systemCapturer = AudioTapCapturer { [systemTranscriber, segmenter] buf in
             systemTranscriber.stream(buf)
+            segmenter?.feed(buf)
         }
         let micCapturer = MicCapturer { [micTranscriber] buf in
             micTranscriber.stream(buf)
@@ -156,8 +171,18 @@ final class AppController: ObservableObject {
         self.micTranscriber = micTranscriber
         self.systemCapturer = systemCapturer
         self.micCapturer = micCapturer
+        self.segmenter = segmenter
         inputDevices = AudioDevices.inputDevices()
         self.ready = true
+
+        if let segmenter {
+            ilog("[diar] enabled, loading models…")
+            Task {
+                do { try await segmenter.start() } catch {
+                    ilog("[diar] start failed: \(error.localizedDescription)")
+                }
+            }
+        }
 
         await start()
     }

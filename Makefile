@@ -52,6 +52,9 @@ dev:
 ifneq ($(SPIKE),)
 	/usr/libexec/PlistBuddy -c "Add :LSEnvironment:STENO_FINALIZE_SPIKE string $(SPIKE)" $(DEV_APP)/Contents/Info.plist
 endif
+ifneq ($(DIAR),)
+	/usr/libexec/PlistBuddy -c "Add :LSEnvironment:STENO_DIAR string $(DIAR)" $(DEV_APP)/Contents/Info.plist
+endif
 	mkdir -p $(DEV_APP)/Contents/Resources
 	cp $(ICON) $(DEV_APP)/Contents/Resources/AppIcon.icns
 	SIGN=$$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 'Apple Development' | awk '{print $$2}'); \
