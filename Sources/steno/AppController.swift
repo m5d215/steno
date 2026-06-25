@@ -13,10 +13,10 @@ struct TranscriptLine: Identifiable {
     let text: String
 }
 
-/// 録音パイプライン(capturer/transcriber/writer)を保持し start/stop を仲介する。
+/// 録音パイプライン(capturer/transcriber/writer/segmenter)を保持し start/stop を仲介する。
 /// system 音声は Core Audio tap、mic は AVCaptureSession。話者の区別は source(system=相手 /
-/// mic=自分)だけで取る。話者分離モデルは持たない: 精度の低い話者ラベルは後段の LLM 要約には
-/// むしろ害で、高精度な source 区別で十分だから。
+/// mic=自分)で取る。さらに system 内の複数話者は SpeakerSegmenter(Streaming Sortformer)が
+/// 話者ターン境界で発話を区切る — 目的は区切りで、ラベル(誰か)は持たない。
 @MainActor
 final class AppController: ObservableObject {
     @Published private(set) var isRecording = false
@@ -65,6 +65,9 @@ final class AppController: ObservableObject {
     /// App Nap 抑止のための activity assertion(アプリ生存中ずっと握る)。
     /// UI 形態に依らず明示的に assertion を握ることで、窓を隠しても SpeechAnalyzer が wedge しない。
     private var activityToken: NSObjectProtocol?
+
+    /// system 音声の話者ターン境界検出器(既定で有効、STENO_DIAR=0 で無効化)。境界で発話を切る。
+    private var segmenter: SpeakerSegmenter?
 
     init() {
         activityToken = ProcessInfo.processInfo.beginActivity(
@@ -123,8 +126,21 @@ final class AppController: ObservableObject {
             return
         }
 
-        let systemCapturer = AudioTapCapturer { [systemTranscriber] buf in
+        // system 音声に Streaming Sortformer を並走させ、話者ターン境界で system transcriber を
+        // finalize(through:) して発話を切る。目的は区切りであって話者特定ではない(ラベル精度は問わない)。
+        // 既定で有効。STENO_DIAR=0 で無効化(モデル読込失敗時は自動で素の動作に縮退するが、明示 off も可)。
+        // object は先に作って capturer の closure に渡し、モデル読込(start, 初回 download あり)は下で
+        // async に走らせる。読込前の feed は no-op。
+        let segmenter: SpeakerSegmenter? =
+            ProcessInfo.processInfo.environment["STENO_DIAR"] != "0"
+            ? SpeakerSegmenter { [systemTranscriber] in
+                Task { await systemTranscriber.finalizeThroughLatest() }
+            }
+            : nil
+
+        let systemCapturer = AudioTapCapturer { [systemTranscriber, segmenter] buf in
             systemTranscriber.stream(buf)
+            segmenter?.feed(buf)
         }
         let micCapturer = MicCapturer { [micTranscriber] buf in
             micTranscriber.stream(buf)
@@ -135,8 +151,18 @@ final class AppController: ObservableObject {
         self.micTranscriber = micTranscriber
         self.systemCapturer = systemCapturer
         self.micCapturer = micCapturer
+        self.segmenter = segmenter
         inputDevices = AudioDevices.inputDevices()
         self.ready = true
+
+        if let segmenter {
+            ilog("[diar] enabled, loading models…")
+            Task {
+                do { try await segmenter.start() } catch {
+                    ilog("[diar] start failed: \(error.localizedDescription)")
+                }
+            }
+        }
 
         await start()
     }

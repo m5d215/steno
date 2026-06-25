@@ -35,8 +35,9 @@ final class Transcriber: @unchecked Sendable {
     }
 
     func start() async throws {
-        // volatile(中間仮説)は使わない(finals のみ消費)ので要求しない。話者分離を持たないので
-        // audioTimeRange も不要(経過秒区間は話者照合専用だった)。
+        // volatile(中間仮説)は使わない(finals のみ消費)ので要求しない。話者ターン区切りは
+        // Sortformer を別途並走させ finalize(through:) で切る方式なので、SpeechAnalyzer 側の
+        // audioTimeRange(token 毎の経過秒区間)も要らない。
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
@@ -86,6 +87,20 @@ final class Transcriber: @unchecked Sendable {
         }
 
         try await analyzer.start(inputSequence: stream)
+    }
+
+    /// これまで analyzer が consume した音声まで強制的に final 確定する。session は継続する
+    /// (`finalize(through:)` は `finalizeAndFinish` と違いセッションを終わらせない)。
+    /// SpeakerSegmenter が話者ターン境界を検出したときにこれを呼び、長い掛け合いが 1 つの final に
+    /// merge されるのを防ぐ(発話を話者の切れ目で区切る)。確定発話は ~100ms 後に results へ publish される。
+    /// `through: nil` = 「最後に consume した音声まで」確定(未 consume なら何もしない)。
+    func finalizeThroughLatest() async {
+        guard let analyzer else { return }
+        do {
+            try await analyzer.finalize(through: nil)
+        } catch {
+            ilog("[\(label)] finalize failed: \(error.localizedDescription)")
+        }
     }
 
     /// audio queue から同期で呼ばれる。AsyncStream.Continuation.yield は thread-safe。
