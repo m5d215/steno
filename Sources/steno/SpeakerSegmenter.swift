@@ -27,6 +27,13 @@ final class SpeakerSegmenter: @unchecked Sendable {
     /// 2 ≈ 約 1s の確認。tentative の一時的な [0,1] フリッカで誤爆しない最小限。
     private let debounceHits = 2
 
+    /// 直近に実際に発話を切った時刻。min-cut-interval の基準。
+    private var lastCutAt: Date?
+    /// この秒数以内の話者 flip では切らない。相槌(「はい」等)の短い割り込みで極小レコードが量産される
+    /// のを抑える。本来の話者が interval 内に戻れば spk==liveSpeaker に戻り、変化自体が消えて吸収される。
+    /// 代償: これ未満の本物の短いターンも merge される(区切りの目的には許容)。tunable。
+    private let minCutInterval: TimeInterval = 1.5
+
     init(onTurnBoundary: @escaping @Sendable () -> Void) {
         self.onTurnBoundary = onTurnBoundary
     }
@@ -80,12 +87,20 @@ final class SpeakerSegmenter: @unchecked Sendable {
             }
             guard candidateHits >= debounceHits else { return }
 
+            // min-cut-interval: 直近の cut から minCutInterval 未満なら切らない(liveSpeaker 据え置き、
+            // candidate も触らない)。短い割り込みは、本来の話者が戻れば上の spk==liveSpeaker 分岐で
+            // 消える。本物のターン交代が interval を跨いで続けば、次の update で確定して切れる。
+            if let lastCutAt, Date().timeIntervalSince(lastCutAt) < minCutInterval {
+                return
+            }
+
             let prev = liveSpeaker
             liveSpeaker = spk
             candidate = nil
             candidateHits = 0
-            // 初回(prev=nil)はストリーム開始なので境界として切らない。
+            // 初回(prev=nil)はストリーム開始なので境界として切らない(lastCutAt も更新しない)。
             if let prev {
+                lastCutAt = Date()
                 ilog(
                     "[diar] turn boundary spk\(prev) -> spk\(spk) "
                         + "@\(String(format: "%.2f", latest.startTime))s")
