@@ -13,10 +13,10 @@ struct TranscriptLine: Identifiable {
     let text: String
 }
 
-/// 録音パイプライン(capturer/transcriber/writer)を保持し start/stop を仲介する。
+/// 録音パイプライン(capturer/transcriber/writer/segmenter)を保持し start/stop を仲介する。
 /// system 音声は Core Audio tap、mic は AVCaptureSession。話者の区別は source(system=相手 /
-/// mic=自分)だけで取る。話者分離モデルは持たない: 精度の低い話者ラベルは後段の LLM 要約には
-/// むしろ害で、高精度な source 区別で十分だから。
+/// mic=自分)で取る。さらに system 内の複数話者は SpeakerSegmenter(Streaming Sortformer)が
+/// 話者ターン境界で発話を区切る — 目的は区切りで、ラベル(誰か)は持たない。
 @MainActor
 final class AppController: ObservableObject {
     @Published private(set) var isRecording = false
@@ -66,10 +66,7 @@ final class AppController: ObservableObject {
     /// UI 形態に依らず明示的に assertion を握ることで、窓を隠しても SpeechAnalyzer が wedge しない。
     private var activityToken: NSObjectProtocol?
 
-    /// [spike] finalize(through:) の force-cut 検証用の周期タスク(STENO_FINALIZE_SPIKE=秒 で有効)。
-    private var finalizeSpikeTask: Task<Void, Never>?
-
-    /// [spike] system 音声の話者ターン境界検出器(STENO_DIAR=1 で有効)。境界で発話を切る。
+    /// system 音声の話者ターン境界検出器(既定で有効、STENO_DIAR=0 で無効化)。境界で発話を切る。
     private var segmenter: SpeakerSegmenter?
 
     init() {
@@ -129,30 +126,13 @@ final class AppController: ObservableObject {
             return
         }
 
-        // [spike] finalize(through:) の挙動検証。STENO_FINALIZE_SPIKE=<秒> で system/mic 両 transcriber を
-        // 周期的に強制 final 確定し、長い連続発話の途中で final が切れて後続も拾い続けるか
-        // (= 話者境界 force-cut の土台が成立するか)を実測する。mic も対象なのでソロで長文を喋れば
-        // 検証できる(通話音声を流す必要なし)。挙動は source 非依存。本番経路には影響しない。
-        if let s = ProcessInfo.processInfo.environment["STENO_FINALIZE_SPIKE"],
-            let interval = Double(s), interval > 0
-        {
-            finalizeSpikeTask = Task { [systemTranscriber, micTranscriber] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(interval))
-                    ilog("[spike] force finalize(through:nil) on system+mic")
-                    await systemTranscriber.finalizeThroughLatest()
-                    await micTranscriber.finalizeThroughLatest()
-                }
-            }
-            ilog("[spike] finalize spike enabled: every \(interval)s")
-        }
-
-        // [spike] STENO_DIAR=1 で system 音声に Streaming Sortformer を並走させ、話者ターン境界で
-        // system transcriber を finalize(through:) して発話を切る。目的は区切りであって話者特定では
-        // ない(ラベル精度は問わない)。object は先に作って capturer の closure に渡し、モデル読込
-        // (start, 初回 download あり)は下で async に走らせる。読込前の feed は no-op。
+        // system 音声に Streaming Sortformer を並走させ、話者ターン境界で system transcriber を
+        // finalize(through:) して発話を切る。目的は区切りであって話者特定ではない(ラベル精度は問わない)。
+        // 既定で有効。STENO_DIAR=0 で無効化(モデル読込失敗時は自動で素の動作に縮退するが、明示 off も可)。
+        // object は先に作って capturer の closure に渡し、モデル読込(start, 初回 download あり)は下で
+        // async に走らせる。読込前の feed は no-op。
         let segmenter: SpeakerSegmenter? =
-            ProcessInfo.processInfo.environment["STENO_DIAR"] != nil
+            ProcessInfo.processInfo.environment["STENO_DIAR"] != "0"
             ? SpeakerSegmenter { [systemTranscriber] in
                 Task { await systemTranscriber.finalizeThroughLatest() }
             }

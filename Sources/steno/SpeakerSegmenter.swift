@@ -32,7 +32,7 @@ final class SpeakerSegmenter: @unchecked Sendable {
     }
 
     /// モデルを HuggingFace(初回のみ download、以降 cache)から読み込んで初期化する。async。
-    /// 起動コスト(67s 再来がないか)の実測ポイント: load 所要を ilog に出す。
+    /// load 所要を ilog に出す(cache 済みで ~1.3s)。失敗は呼び出し側で catch され、素の動作に縮退する。
     func start(config: SortformerConfig = .default) async throws {
         let t0 = Date()
         let models = try await SortformerModels.loadFromHuggingFace(

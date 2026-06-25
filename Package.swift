@@ -11,8 +11,8 @@ import PackageDescription
 //     BT/held-open で張り付くため trigger に使えないと実測で判明)
 //   - 話者は source(system=相手 / mic=自分)で区別する。加えて system 側のミックス内に複数話者が
 //     いる場合に「話者が変わったら発話を区切る」ため、Streaming Sortformer(FluidAudio, CoreML)で
-//     話者ターン境界を検出し finalize(through:) で発話を切る方式を評価中(spike, STENO_DIAR gate)。
-//     ラベル精度は最低限で良い(目的は特定ではなく区切り)。ANE は SpeechAnalyzer×2 が握るため
+//     話者ターン境界を検出し finalize(through:) で発話を切る(既定で有効、STENO_DIAR=0 で無効化)。
+//     目的は話者特定ではなく区切りなのでラベル精度は問わない。ANE は SpeechAnalyzer×2 が握るため
 //     diarizer の compute units は ANE を外す(.cpuAndGPU)。
 //   - メニューバーではなく窓 UI。App Nap は ProcessInfo.beginActivity で明示的に抑止する
 let package = Package(

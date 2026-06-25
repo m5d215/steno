@@ -1,7 +1,8 @@
 import Foundation
 
 /// 1 確定発話を表すレコード。steno はこれを jsonl に「書くだけ」。
-/// 話者は source(system=相手 / mic=自分)で区別する。話者分離モデルは持たない。
+/// 話者は source(system=相手 / mic=自分)で区別する。system 内の複数話者は話者ターンで発話を
+/// 区切る(SpeakerSegmenter)が、ラベル(spk)は持たないので、このレコードのスキーマは不変。
 struct TranscriptRecord {
     let start: Date
     let source: String   // "system"(相手の声) | "mic"(自分)
