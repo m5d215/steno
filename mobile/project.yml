@@ -11,8 +11,10 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    # 実機署名用の Team(Personal Team / 無料 Apple ID)。署名は Automatic。
-    DEVELOPMENT_TEAM: "F4BCR72J2R"
+    # 実機署名用の Team は各自ローカルで設定する(Xcode の Signing、または gitignore した
+    # xcconfig)。public repo に個人アカウント紐付きの Team ID を載せないため空にしている。
+    # シミュレータビルドは署名不要なので空でも通る。
+    DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
 
 packages:
