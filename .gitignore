@@ -1,2 +1,13 @@
-/.build/
-/*.app/
+# Swift / Xcode build output(mac / Core / mobile どこでも)
+.build/
+*.app/
+DerivedData/
+*.xcuserstate
+
+# xcodegen 生成物(mobile。project.yml が SSOT)
+*.xcodeproj/
+Generated/
+
+# example-server の実行時ログ(受信した文字起こし。個人データなので追跡しない)
+received.jsonl
+**/received.jsonl

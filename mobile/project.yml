@@ -1,0 +1,64 @@
+name: steno-mobile
+options:
+  bundleIdPrefix: com.m5d215
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # 実機署名用の Team(Personal Team / 無料 Apple ID)。署名は Automatic。
+    DEVELOPMENT_TEAM: "F4BCR72J2R"
+    CODE_SIGN_STYLE: Automatic
+
+packages:
+  StenoCore:
+    path: ../Core
+
+targets:
+  steno-mobile:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: StenoCore
+        product: StenoCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.m5d215.steno-mobile
+        PRODUCT_NAME: steno
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: steno
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "26.0"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # 常時録音のためのバックグラウンド audio。アプリ稼働中は録り続ける。
+        UIBackgroundModes:
+          - audio
+        NSMicrophoneUsageDescription: >-
+          周囲の会話を文字起こしするため、マイク音声を取得します。音声は端末内でのみ処理し、
+          文字起こし結果だけを指定した宛先へ送信します。
+        NSSpeechRecognitionUsageDescription: >-
+          取得した音声をオンデバイスで文字起こしします。音声は外部に送信されません。
+        # ATS 例外。宛先は Tailscale(WireGuard がトンネルを暗号化済み)なので素の HTTP を許す。
+        # 全 HTTP を開けず、tailnet の MagicDNS 名(*.ts.net)と private IP だけに絞る。
+        # 100.x の IP 直打ちで通らない場合は NSAllowsArbitraryLoads: true に切り替える。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: true

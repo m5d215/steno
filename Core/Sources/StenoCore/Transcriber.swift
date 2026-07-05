@@ -8,7 +8,7 @@ import Speech
 ///
 /// App Nap は SpeechAnalyzer を wedge させる(音声は来るのに確定発話が出ない)。これは UI 形態
 /// ではなく AppController 側の ProcessInfo.beginActivity で nap を明示的に抑止して対処する。
-final class Transcriber: @unchecked Sendable {
+public final class Transcriber: @unchecked Sendable {
     private let locale: Locale
     private let label: String
     private let contextualStrings: [String]
@@ -23,7 +23,7 @@ final class Transcriber: @unchecked Sendable {
     private var recognizerTask: Task<Void, Never>?
     private var streamCount = 0
 
-    init(
+    public init(
         locale: Locale, label: String,
         contextualStrings: [String] = [],
         onFinal: @escaping @Sendable (String, Date) -> Void
@@ -34,7 +34,7 @@ final class Transcriber: @unchecked Sendable {
         self.onFinal = onFinal
     }
 
-    func start() async throws {
+    public func start() async throws {
         // volatile(中間仮説)は使わない(finals のみ消費)ので要求しない。話者ターン区切りは
         // Sortformer を別途並走させ finalize(through:) で切る方式なので、SpeechAnalyzer 側の
         // audioTimeRange(token 毎の経過秒区間)も要らない。
@@ -94,7 +94,7 @@ final class Transcriber: @unchecked Sendable {
     /// SpeakerSegmenter が話者ターン境界を検出したときにこれを呼び、長い掛け合いが 1 つの final に
     /// merge されるのを防ぐ(発話を話者の切れ目で区切る)。確定発話は ~100ms 後に results へ publish される。
     /// `through: nil` = 「最後に consume した音声まで」確定(未 consume なら何もしない)。
-    func finalizeThroughLatest() async {
+    public func finalizeThroughLatest() async {
         guard let analyzer else { return }
         do {
             try await analyzer.finalize(through: nil)
@@ -103,8 +103,19 @@ final class Transcriber: @unchecked Sendable {
         }
     }
 
+    /// 入力を締めてセッションを終える。stop 時に呼ぶ(mac は破棄で足りるので任意)。
+    public func finish() async {
+        inputBuilder?.finish()
+        recognizerTask?.cancel()
+        if let analyzer {
+            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+        }
+        analyzer = nil
+        transcriber = nil
+    }
+
     /// audio queue から同期で呼ばれる。AsyncStream.Continuation.yield は thread-safe。
-    func stream(_ buffer: AVAudioPCMBuffer) {
+    public func stream(_ buffer: AVAudioPCMBuffer) {
         streamCount += 1
         guard let analyzerFormat, let inputBuilder else {
             dlog("[Transcriber:\(label)] stream: not ready")

@@ -15,16 +15,19 @@ import PackageDescription
 //     目的は話者特定ではなく区切りなのでラベル精度は問わない。ANE は SpeechAnalyzer×2 が握るため
 //     diarizer の compute units は ANE を外す(.cpuAndGPU)。
 //   - メニューバーではなく窓 UI。App Nap は ProcessInfo.beginActivity で明示的に抑止する
+//
+// ASR + 話者分離のエンジン(Transcriber / SpeakerSegmenter / BufferConverter)は ../Core の
+// StenoCore に切り出して mobile と共有する。ここには capture / writer / UI / 認可 など macOS 固有部のみ。
 let package = Package(
     name: "steno",
     platforms: [.macOS("26.0")],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.4")
+        .package(path: "../Core")
     ],
     targets: [
         .executableTarget(
             name: "steno",
-            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            dependencies: [.product(name: "StenoCore", package: "Core")],
             path: "Sources/steno"
         )
     ]
