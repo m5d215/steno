@@ -10,8 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  mac:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
       - run: swift build
+        working-directory: mac
+  mobile:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - run: brew install xcodegen
+      - run: make gen
+        working-directory: mobile
+      - run: >-
+          xcodebuild -project steno-mobile.xcodeproj -scheme steno-mobile
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO build
+        working-directory: mobile

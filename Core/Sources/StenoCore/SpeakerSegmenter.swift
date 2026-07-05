@@ -13,7 +13,7 @@ import Foundation
 ///   - thread-safety: SortformerDiarizer は **non thread-safe**。audio callback(Core Audio
 ///     スレッド)から直接触らず、専用 serial queue 上でのみアクセスする。feed() は float 抽出だけ
 ///     audio スレッドで行い、推論は queue に逃がす(audio render を CoreML 推論でブロックしない)。
-final class SpeakerSegmenter: @unchecked Sendable {
+public final class SpeakerSegmenter: @unchecked Sendable {
     private let onTurnBoundary: @Sendable () -> Void
     private let queue = DispatchQueue(label: "com.m5d215.steno.diar", qos: .userInitiated)
 
@@ -34,13 +34,13 @@ final class SpeakerSegmenter: @unchecked Sendable {
     /// 代償: これ未満の本物の短いターンも merge される(区切りの目的には許容)。tunable。
     private let minCutInterval: TimeInterval = 1.5
 
-    init(onTurnBoundary: @escaping @Sendable () -> Void) {
+    public init(onTurnBoundary: @escaping @Sendable () -> Void) {
         self.onTurnBoundary = onTurnBoundary
     }
 
     /// モデルを HuggingFace(初回のみ download、以降 cache)から読み込んで初期化する。async。
     /// load 所要を ilog に出す(cache 済みで ~1.3s)。失敗は呼び出し側で catch され、素の動作に縮退する。
-    func start(config: SortformerConfig = .default) async throws {
+    public func start(config: SortformerConfig = .default) async throws {
         let t0 = Date()
         let models = try await SortformerModels.loadFromHuggingFace(
             config: config, computeUnits: .cpuAndGPU)
@@ -51,7 +51,7 @@ final class SpeakerSegmenter: @unchecked Sendable {
     }
 
     /// audio callback(Core Audio スレッド)から同期で呼ばれる。mono float を抜いて queue に渡す。
-    func feed(_ buffer: AVAudioPCMBuffer) {
+    public func feed(_ buffer: AVAudioPCMBuffer) {
         guard let ch = buffer.floatChannelData else { return }
         let n = Int(buffer.frameLength)
         guard n > 0 else { return }

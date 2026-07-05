@@ -1,4 +1,5 @@
 import Combine
+import StenoCore
 import SwiftUI
 
 /// steno — 常時ローカルで聞いて、喋りを話者付きで書き起こし続ける macOS アプリ。
@@ -7,7 +8,11 @@ import SwiftUI
 struct StenoApp: App {
     // 何よりも先に stdout/stderr をファイルへ張り替える(GUI 起動でも生ログを残すため)。
     // @StateObject の AppController() は autoclosure で遅延生成されるので、ここが最初に走る。
-    init() { redirectStandardStreams() }
+    init() {
+        redirectStandardStreams()
+        // Core(StenoCore)エンジンのログも steno.log へ流す。従来 mac の firehose を保つ。
+        StenoCoreLog.sink = { StenoLog.shared.write($0) }
+    }
 
     @StateObject private var controller = AppController()
 

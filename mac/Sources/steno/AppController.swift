@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Foundation
 import Speech
+import StenoCore
 import os
 
 /// UI 表示用の 1 行。jsonl とは別に、確定発話を in-process でそのまま UI へ流すための型。
