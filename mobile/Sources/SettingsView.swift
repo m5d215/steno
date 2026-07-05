@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage(Config.endpointKey) private var endpoint = ""
     @AppStorage(Config.tokenKey) private var token = ""
     @AppStorage(Config.deviceIdKey) private var deviceId = ""
+    @AppStorage(Config.diarEnabledKey) private var diarEnabled = true
 
     var body: some View {
         NavigationStack {
@@ -35,6 +36,15 @@ struct SettingsView: View {
                     Text("デバイス ID")
                 } footer: {
                     Text("送信元の識別子。空なら \(Config.defaultDeviceId)。")
+                }
+
+                Section {
+                    Toggle("話者ターンで区切る", isOn: $diarEnabled)
+                } header: {
+                    Text("話者分離")
+                } footer: {
+                    Text("複数人の会話で、話者が変わった点で発話を分ける(オンデバイス)。"
+                        + "off だと間(無音)でしか切れず、掛け合いは 1 行に merge される。変更は次回の開始から反映。")
                 }
             }
             .navigationTitle("設定")

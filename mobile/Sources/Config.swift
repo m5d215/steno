@@ -6,6 +6,7 @@ enum Config {
     static let endpointKey = "endpoint"   // 例: http://100.x.y.z:8787 (Tailscale の宛先ベース URL)
     static let tokenKey = "token"         // Bearer トークン
     static let deviceIdKey = "deviceId"   // 送信元の識別子(サーバ側 dedup キーの一部)
+    static let diarEnabledKey = "diarEnabled"  // 話者ターンで発話を区切るか(既定 on)
 
     static let defaultDeviceId = "iphone"
 
@@ -14,5 +15,10 @@ enum Config {
     static var deviceId: String {
         let v = UserDefaults.standard.string(forKey: deviceIdKey) ?? ""
         return v.isEmpty ? defaultDeviceId : v
+    }
+
+    /// 話者ターン区切り(オンデバイス話者分離)。未設定なら on。
+    static var diarEnabled: Bool {
+        UserDefaults.standard.object(forKey: diarEnabledKey) as? Bool ?? true
     }
 }

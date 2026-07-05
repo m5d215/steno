@@ -17,6 +17,7 @@ final class AppModel {
     private let store = TranscriptStore()
     private var transcriber: Transcriber?
     private var mic: MicCapturer?
+    private var segmenter: SpeakerSegmenter?
     private var shipper: Shipper?
     private var pollTask: Task<Void, Never>?
 
@@ -38,10 +39,37 @@ final class AppModel {
             try await t.start()
             self.transcriber = t
 
-            let mic = MicCapturer { [weak t] buffer in t?.stream(buffer) }
+            // 話者ターン境界で発話を区切る(任意)。境界で Transcriber を finalize して行を割る。
+            // 目的は区切りであってラベル付けではない(誰が話したかは付かない)。
+            let segmenter: SpeakerSegmenter? =
+                Config.diarEnabled
+                ? SpeakerSegmenter { [weak t] in
+                    Task { await t?.finalizeThroughLatest() }
+                }
+                : nil
+
+            // mic を Transcriber と Segmenter に fan-out する。
+            let mic = MicCapturer { [weak t, weak segmenter] buffer in
+                t?.stream(buffer)
+                segmenter?.feed(buffer)
+            }
             try mic.start()
             self.mic = mic
+            self.segmenter = segmenter
             self.micStatus = "録音中"
+
+            // モデル読込(初回のみ HuggingFace から DL)は async。読込前の feed は no-op。
+            // 失敗しても素の文字起こしに縮退する(区切りが無くなるだけ)。
+            if let segmenter {
+                ilog("[diar] loading models…")
+                Task {
+                    do {
+                        try await segmenter.start()
+                    } catch {
+                        ilog("[diar] start failed: \(error.localizedDescription)")
+                    }
+                }
+            }
 
             let shipper = Shipper(store: store) { [weak self] status in
                 self?.shipStatus = status
@@ -62,6 +90,7 @@ final class AppModel {
     func stop() async {
         mic?.stop()
         mic = nil
+        segmenter = nil
         shipper?.stop()
         shipper = nil
         await transcriber?.finish()
