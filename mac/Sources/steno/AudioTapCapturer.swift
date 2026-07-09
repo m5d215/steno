@@ -81,6 +81,16 @@ final class AudioTapCapturer: @unchecked Sendable {
     private let deviceRate = OSAllocatedUnfairLock(initialState: Double(0))  // tap を作った時の出力デバイスの nominal rate
     private let outDevice = OSAllocatedUnfairLock(initialState: AudioObjectID(kAudioObjectUnknown))  // tap が乗る出力デバイス
 
+    // silent-death 検知(恒久)。tap は buffer を出し続けるのに中身が digital zero で張り付く死に方を
+    // 拾う。生きた経路はノイズフロアで rms が必ず非ゼロなので、「ちょうど 0(<silenceEpsilon)」が
+    // 続く = 経路が死んでいる。lastRMS は直近バッファの RMS、lastSignalAt は最後に非ゼロを見た時刻。
+    private let lastRMS = OSAllocatedUnfairLock(initialState: Float(0))
+    private let lastSignalAt = OSAllocatedUnfairLock(initialState: Date.distantPast)
+    private let silenceEpsilon: Float = 1e-6  // これ未満は digital zero とみなす(生音は必ず上回る)
+    private let silentDeathThreshold: TimeInterval = 15  // 誰か出力中なのに digital zero がこの秒数続く = silent-death
+    private let silentDeathBackoff: TimeInterval = 30  // recreate しても直らない時に連発しない間隔
+    private let lastSilentRecreateAt = OSAllocatedUnfairLock(initialState: Date.distantPast)
+
     // 現出力デバイスの sample rate 変化リスナー(BT プロファイル切り替え等を捕まえる)。controlQueue 限定。
     private var formatListenerBlock: AudioObjectPropertyListenerBlock?
     private var formatListenerDevice = AudioObjectID(kAudioObjectUnknown)
@@ -202,6 +212,7 @@ final class AudioTapCapturer: @unchecked Sendable {
 
         let now = Date()
         lastBufferAt.withLock { $0 = now }
+        lastSignalAt.withLock { $0 = now }  // silent-death 判定の起点(起動直後・recreate 直後の誤発火防止)
         // tap format(fmt.sampleRate)ではなく**デバイスの nominal rate** を覚える。tap format は
         // デバイスのレートと別レイヤーで常に異なりうる(48000 tap on 44100 device は正常)。watchdog
         // が「デバイスのレートが変わったか」を同レイヤーで比較できるよう、デバイス側の値を記録する。
@@ -283,6 +294,21 @@ final class AudioTapCapturer: @unchecked Sendable {
             memcpy(dst, src, n)
         }
 
+        // silent-death 検知の観測点(恒久)。直近バッファの RMS を測り、非ゼロを見た時刻を控える。
+        // tap が死ぬと buffer は来る(lastBufferAt は進む)のに中身が digital zero になる — これを watchdog が拾う。
+        if let ch = pcm.floatChannelData {
+            let n = Int(pcm.frameLength)
+            let samples = ch[0]
+            var sum: Float = 0
+            for i in 0..<n {
+                let v = samples[i]
+                sum += v * v
+            }
+            let rms = n > 0 ? (sum / Float(n)).squareRoot() : 0
+            lastRMS.withLock { $0 = rms }
+            if rms >= silenceEpsilon { lastSignalAt.withLock { $0 = Date() } }
+        }
+
         lastBufferAt.withLock { $0 = Date() }
         onBuffer(pcm)
     }
@@ -296,12 +322,29 @@ final class AudioTapCapturer: @unchecked Sendable {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self else { break }
                 let now = Date()
+                let silentFor = now.timeIntervalSince(self.lastSignalAt.withLock { $0 })
 
                 // (1) frames-stall: バッファ自体が来ない = tap が完全に死んでる
                 let idle = now.timeIntervalSince(self.lastBufferAt.withLock { $0 })
                 if idle > self.staleThreshold {
                     ilog("watchdog: no system audio for \(Int(idle))s, recreating tap")
                     self.requestRecreate(reason: "stale \(Int(idle))s")
+                    continue
+                }
+
+                // (1b) silent-death: buffer は来てる(idle 小、frames-stall は上で処理済み)のに tap の
+                // 中身が digital zero で張り付く死に方(実測)。生きた経路はノイズフロアで rms が必ず
+                // 非ゼロなので、誰かが出力中なのに厳密ゼロが silentDeathThreshold 続いたら経路が死んでいる。
+                // 前版は「rms < 閾値」で静かな生音まで殺して誤発火した(1日679回、発話取りこぼし)。ここは
+                // 「厳密ゼロ(<silenceEpsilon) + 出力中プロセスあり + backoff」に絞る: 生音の pause は
+                // ノイズフロアで非ゼロなので踏まない。真の無音(何も鳴っていない)は出力中プロセスが無く除外。
+                let sinceSilentRecreate = now.timeIntervalSince(self.lastSilentRecreateAt.withLock { $0 })
+                if silentFor > self.silentDeathThreshold, sinceSilentRecreate > self.silentDeathBackoff,
+                    !OutputProcesses.currentOutputAppNames().isEmpty
+                {
+                    self.lastSilentRecreateAt.withLock { $0 = now }
+                    ilog("watchdog: system tap silent (digital zero) \(Int(silentFor))s while output active, recreating tap")
+                    self.requestRecreate(reason: "silent-death \(Int(silentFor))s")
                     continue
                 }
 
