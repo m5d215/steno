@@ -1,5 +1,6 @@
 # Swift / Xcode build output(mac / Core / mobile どこでも)
 .build/
+.swiftpm/
 *.app/
 DerivedData/
 *.xcuserstate

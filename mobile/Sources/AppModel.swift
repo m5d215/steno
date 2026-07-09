@@ -53,7 +53,7 @@ final class AppModel {
                 t?.stream(buffer)
                 segmenter?.feed(buffer)
             }
-            try mic.start()
+            try mic.start(voiceProcessing: Config.voiceProcessingEnabled)
             self.mic = mic
             self.segmenter = segmenter
             self.micStatus = "録音中"

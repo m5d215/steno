@@ -18,6 +18,10 @@ final class MicCapturer: @unchecked Sendable {
     private let onBuffer: @Sendable (AVAudioPCMBuffer) -> Void
     private var engine = AVAudioEngine()
 
+    // Apple の voice processing(ノイズ抑制 + AGC)。ノイズ床を下げる実験用。restart 後も維持する
+    // よう保持する。近接 1 話者前提のチューニングなので遠い話者を抑える副作用がありうる(トグルで A/B)。
+    private var voiceProcessing = false
+
     // engine の生成/差し替えは全てこのキュー上でだけ行う(watchdog と通知ハンドラの競合を直列化)。
     private let engineQueue = DispatchQueue(label: "com.m5d215.steno-mobile.mic.engine")
 
@@ -30,14 +34,17 @@ final class MicCapturer: @unchecked Sendable {
         self.onBuffer = onBuffer
     }
 
-    func start() throws {
+    func start(voiceProcessing: Bool) throws {
+        self.voiceProcessing = voiceProcessing
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .default, options: [])
+        // voice processing(AEC/NS/AGC の IO unit)は playAndRecord を要する。素の録音は record。
+        let category: AVAudioSession.Category = voiceProcessing ? .playAndRecord : .record
+        try session.setCategory(category, mode: .default, options: [])
         try session.setActive(true)
         try startEngine()
         registerObservers()
         startWatchdog()
-        ilog("mic started")
+        ilog("mic started (voiceProcessing=\(voiceProcessing))")
     }
 
     func stop() {
@@ -54,7 +61,15 @@ final class MicCapturer: @unchecked Sendable {
 
     private func startEngine() throws {
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)  // 実 hardware format。固定しない。
+        // voice processing は engine 起動前に有効化する。format はこの後に読む(VP 後の実 format)。
+        if voiceProcessing {
+            do {
+                try input.setVoiceProcessingEnabled(true)
+            } catch {
+                ilog("mic: voice processing unavailable: \(error.localizedDescription)")
+            }
+        }
+        let format = input.outputFormat(forBus: 0)  // 実 format。固定しない(VP で変わる)。
         input.removeTap(onBus: 0)
         let onBuffer = self.onBuffer
         let lastBufferAt = self.lastBufferAt
